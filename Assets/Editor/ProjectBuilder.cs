@@ -268,10 +268,21 @@ namespace SlotGame.EditorTools
             Text betText = CreateText("BetText", machine.transform, new Vector2(-140f, -252f), new Vector2(210f, 56f), 30, TextAnchor.MiddleCenter);
             Text winText = CreateText("WinText", machine.transform, new Vector2(140f, -252f), new Vector2(210f, 56f), 30, TextAnchor.MiddleCenter);
 
-            // --- spin button (art triangle, left of the cabinet) -------------------
+            // --- spin + autoplay buttons (left of the cabinet) ---------------------
             Sprite[] spinFrames = LoadFrames("Assets/Art/Buttons/slot_machine_buttons-03.png",
                 "frame_0", "frame_1", "frame_2", "frame_3");
-            SpriteStateButton spinButton = CreateSpriteButton("SpinButton", canvasGo.transform, new Vector2(-386f, -40f), new Vector2(152f, 152f), spinFrames);
+            SpriteStateButton spinButton = CreateSpriteButton("SpinButton", canvasGo.transform, new Vector2(-386f, 40f), new Vector2(152f, 152f), spinFrames);
+
+            var autoButtons = new Button[2];
+            for (int i = 0; i < autoButtons.Length; i++)
+            {
+                autoButtons[i] = CreateLabelButton(
+                    $"AutoButton_{i}",
+                    canvasGo.transform,
+                    new Vector2(-386f, -62f - i * 54f),
+                    new Vector2(150f, 46f),
+                    "AUTO");
+            }
 
             // --- bet panel (right) -------------------------------------------------
             Sprite panelSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
@@ -302,9 +313,9 @@ namespace SlotGame.EditorTools
             quitter.Configure(exitButton);
 
             // --- paytable (left of the cabinet) -----------------------------------
-            Text paytable = CreateText("Paytable", canvasGo.transform, new Vector2(-392f, -228f), new Vector2(196f, 170f), 18, TextAnchor.UpperLeft);
+            Text paytable = CreateText("Paytable", canvasGo.transform, new Vector2(-392f, -268f), new Vector2(200f, 220f), 18, TextAnchor.UpperLeft);
             paytable.color = new Color(0.86f, 0.89f, 1f, 0.92f);
-            paytable.text = "MATCH 3 ON A LINE\nSEVEN  50x\nBELL   35x\nBAR    10x\nCHERRY  5x\n\nx LINE BET";
+            paytable.text = "MATCH 3 ON A LINE\nSEVEN  50x\nBELL   35x\nBAR    10x\nCHERRY  5x\n\n9 MATCH  200x\n\nx LINE BET";
 
             // --- status line -------------------------------------------------------
             Text statusText = CreateText("StatusText", canvasGo.transform, new Vector2(0f, -342f), new Vector2(700f, 44f), 24, TextAnchor.MiddleCenter);
@@ -326,21 +337,32 @@ namespace SlotGame.EditorTools
             var captureRunner = machineGo.AddComponent<SlotGame.Diagnostics.CaptureRunner>();
             captureRunner.Configure(slotMachine);
 
+            var rtpSimulator = machineGo.AddComponent<SlotGame.Diagnostics.RtpSimulator>();
+            rtpSimulator.Configure(config);
+
+            var hudRefs = new HudReferences
+            {
+                creditsText = creditsText,
+                betText = betText,
+                winText = winText,
+                statusText = statusText,
+                spinButton = spinButton,
+                betButtons = betButtons,
+                autoButtons = autoButtons,
+                winHighlights = highlights
+            };
+
+            var gambleRefs = new GambleReferences
+            {
+                panel = popupRoot,
+                title = title,
+                amount = amount,
+                yes = yes,
+                no = no
+            };
+
             var view = machineGo.AddComponent<SlotMachineView>();
-            view.Configure(
-                slotMachine,
-                creditsText,
-                betText,
-                winText,
-                statusText,
-                spinButton,
-                betButtons,
-                highlights,
-                popupRoot,
-                title,
-                amount,
-                yes,
-                no);
+            view.Configure(slotMachine, hudRefs, gambleRefs);
 
             Directory.CreateDirectory("Assets/Scenes");
             EditorSceneManager.SaveScene(scene, ScenePath);

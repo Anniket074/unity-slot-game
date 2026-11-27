@@ -1,10 +1,36 @@
-using System.Collections.Generic;
+using System;
+using System.Collections;
 using SlotGame.Machine;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace SlotGame.UI
 {
+    /// <summary>Every HUD widget the view drives, grouped so the builder can hand them over in one go.</summary>
+    [Serializable]
+    public sealed class HudReferences
+    {
+        public Text creditsText;
+        public Text betText;
+        public Text winText;
+        public Text statusText;
+        public Button spinButton;
+        public Button[] betButtons = Array.Empty<Button>();
+        public Button[] autoButtons = Array.Empty<Button>();
+        public GameObject[] winHighlights = Array.Empty<GameObject>();
+    }
+
+    /// <summary>Widgets that make up the gamble offer.</summary>
+    [Serializable]
+    public sealed class GambleReferences
+    {
+        public GameObject panel;
+        public Text title;
+        public Text amount;
+        public Button yes;
+        public Button no;
+    }
+
     /// <summary>
     /// Presentation layer. Subscribes to <see cref="SlotMachine"/> events and updates
     /// texts, buttons, payline highlights and the gamble popup. It never changes game
@@ -12,59 +38,32 @@ namespace SlotGame.UI
     /// </summary>
     public sealed class SlotMachineView : MonoBehaviour
     {
-        [SerializeField] private SlotMachine machine;
-        [SerializeField] private Text creditsText;
-        [SerializeField] private Text betText;
-        [SerializeField] private Text winText;
-        [SerializeField] private Text statusText;
-        [SerializeField] private Button spinButton;
-        [SerializeField] private Button[] betButtons = new Button[0];
-        [SerializeField] private GameObject[] winHighlights = new GameObject[0];
-        [SerializeField] private GameObject gamblePanel;
-        [SerializeField] private Text gambleTitle;
-        [SerializeField] private Text gambleAmount;
-        [SerializeField] private Button gambleYes;
-        [SerializeField] private Button gambleNo;
+        private const float WinPopupDelay = 0.9f;
+        private const float MegaPopupDelay = 1.5f;
 
         private static readonly Color SelectedBetColor = Color.white;
         private static readonly Color UnselectedBetColor = new Color(0.72f, 0.75f, 0.85f, 1f);
 
-        private Coroutine _popupRoutine;
+        [SerializeField] private SlotMachine machine;
+        [SerializeField] private HudReferences hud = new HudReferences();
+        [SerializeField] private GambleReferences gamble = new GambleReferences();
 
-        public void Configure(
-            SlotMachine slotMachine,
-            Text credits,
-            Text bet,
-            Text win,
-            Text status,
-            Button spin,
-            Button[] bets,
-            GameObject[] highlights,
-            GameObject panel,
-            Text title,
-            Text amount,
-            Button yes,
-            Button no)
+        private Text[] _autoLabels = Array.Empty<Text>();
+        private Coroutine _popupRoutine;
+        private bool _pendingMega;
+
+        public void Configure(SlotMachine slotMachine, HudReferences hudReferences, GambleReferences gambleReferences)
         {
             machine = slotMachine;
-            creditsText = credits;
-            betText = bet;
-            winText = win;
-            statusText = status;
-            spinButton = spin;
-            betButtons = bets;
-            winHighlights = highlights;
-            gamblePanel = panel;
-            gambleTitle = title;
-            gambleAmount = amount;
-            gambleYes = yes;
-            gambleNo = no;
+            hud = hudReferences;
+            gamble = gambleReferences;
         }
 
         private void OnEnable()
         {
             if (machine == null)
             {
+                Debug.LogError("[SlotMachineView] No SlotMachine assigned.", this);
                 return;
             }
 
@@ -76,52 +75,60 @@ namespace SlotGame.UI
             machine.GambleResolved += HandleGambleResolved;
             machine.WinCollected += HandleWinCollected;
             machine.StatusMessage += HandleStatusMessage;
+            machine.AutoPlayChanged += HandleAutoPlayChanged;
 
-            if (spinButton != null)
-            {
-                spinButton.onClick.AddListener(HandleSpinClicked);
-            }
-
-            for (int i = 0; i < betButtons.Length; i++)
+            _autoLabels = new Text[hud.autoButtons.Length];
+            for (int i = 0; i < hud.autoButtons.Length; i++)
             {
                 int index = i;
-                if (betButtons[i] != null)
+                Button button = hud.autoButtons[i];
+                if (button == null)
                 {
-                    betButtons[i].onClick.AddListener(() => machine.SetBetIndex(index));
+                    continue;
+                }
+
+                _autoLabels[i] = button.GetComponentInChildren<Text>();
+                button.onClick.AddListener(() => HandleAutoClicked(index));
+            }
+
+            if (hud.spinButton != null)
+            {
+                hud.spinButton.onClick.AddListener(HandleSpinClicked);
+            }
+
+            for (int i = 0; i < hud.betButtons.Length; i++)
+            {
+                int index = i;
+                if (hud.betButtons[i] != null)
+                {
+                    hud.betButtons[i].onClick.AddListener(() => machine.SetBetIndex(index));
                 }
             }
 
-            if (gambleYes != null)
+            if (gamble.yes != null)
             {
-                gambleYes.onClick.AddListener(HandleGambleClicked);
+                gamble.yes.onClick.AddListener(HandleGambleClicked);
             }
 
-            if (gambleNo != null)
+            if (gamble.no != null)
             {
-                gambleNo.onClick.AddListener(HandleCollectClicked);
+                gamble.no.onClick.AddListener(HandleCollectClicked);
             }
 
-            if (gamblePanel != null)
+            if (gamble.panel != null)
             {
-                gamblePanel.SetActive(false);
+                gamble.panel.SetActive(false);
             }
 
             ClearHighlights();
-            RefreshBetButtons(0);
-
             HandleCreditsChanged(machine.Credits);
             HandleBetChanged(machine.CurrentBet);
-            if (winText != null)
-            {
-                winText.text = "WIN 0 G";
-            }
-        }
+            HandleAutoPlayChanged(0);
+            RefreshInteractables();
 
-        private void Update()
-        {
-            if (Input.GetKeyDown(KeyCode.Space))
+            if (hud.winText != null)
             {
-                machine.Spin();
+                hud.winText.text = "WIN 0 G";
             }
         }
 
@@ -140,26 +147,55 @@ namespace SlotGame.UI
             machine.GambleResolved -= HandleGambleResolved;
             machine.WinCollected -= HandleWinCollected;
             machine.StatusMessage -= HandleStatusMessage;
+            machine.AutoPlayChanged -= HandleAutoPlayChanged;
 
-            if (spinButton != null)
+            if (hud.spinButton != null)
             {
-                spinButton.onClick.RemoveListener(HandleSpinClicked);
+                hud.spinButton.onClick.RemoveListener(HandleSpinClicked);
             }
 
-            if (gambleYes != null)
+            if (gamble.yes != null)
             {
-                gambleYes.onClick.RemoveListener(HandleGambleClicked);
+                gamble.yes.onClick.RemoveListener(HandleGambleClicked);
             }
 
-            if (gambleNo != null)
+            if (gamble.no != null)
             {
-                gambleNo.onClick.RemoveListener(HandleCollectClicked);
+                gamble.no.onClick.RemoveListener(HandleCollectClicked);
+            }
+        }
+
+        private void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.Space))
+            {
+                if (machine.IsAutoPlaying)
+                {
+                    machine.StopAutoPlay();
+                    return;
+                }
+
+                machine.Spin();
             }
         }
 
         private void HandleSpinClicked()
         {
             machine.Spin();
+        }
+
+        private void HandleAutoClicked(int index)
+        {
+            if (machine.IsAutoPlaying)
+            {
+                machine.StopAutoPlay();
+                return;
+            }
+
+            if (index >= 0 && index < machine.AutoSpinOptions.Count)
+            {
+                machine.StartAutoPlay(machine.AutoSpinOptions[index]);
+            }
         }
 
         private void HandleGambleClicked()
@@ -174,17 +210,17 @@ namespace SlotGame.UI
 
         private void HandleCreditsChanged(int credits)
         {
-            if (creditsText != null)
+            if (hud.creditsText != null)
             {
-                creditsText.text = $"CREDIT\n{credits} G";
+                hud.creditsText.text = $"CREDIT\n{credits} G";
             }
         }
 
         private void HandleBetChanged(int bet)
         {
-            if (betText != null)
+            if (hud.betText != null)
             {
-                betText.text = $"BET {bet} G";
+                hud.betText.text = $"BET {bet} G";
             }
 
             RefreshBetButtons(bet);
@@ -192,9 +228,9 @@ namespace SlotGame.UI
 
         private void HandleSpinStarted()
         {
-            if (winText != null)
+            if (hud.winText != null)
             {
-                winText.text = "WIN 0 G";
+                hud.winText.text = "WIN 0 G";
             }
 
             ClearHighlights();
@@ -202,30 +238,19 @@ namespace SlotGame.UI
 
         private void HandleBusyChanged(bool busy)
         {
-            if (spinButton != null)
-            {
-                spinButton.interactable = !busy;
-            }
-
-            foreach (Button button in betButtons)
-            {
-                if (button != null)
-                {
-                    button.interactable = !busy;
-                }
-            }
+            RefreshInteractables();
         }
 
-        private void HandleSpinResolved(int totalWin, IReadOnlyList<PaylineWin> wins)
+        private void HandleSpinResolved(SpinOutcome outcome)
         {
-            if (winText != null)
+            if (hud.winText != null)
             {
-                winText.text = $"WIN {totalWin} G";
+                hud.winText.text = $"WIN {outcome.TotalWin} G";
             }
 
-            ShowWinningRows(wins);
+            ShowWinningRows(outcome.Lines);
 
-            if (totalWin <= 0 || gamblePanel == null)
+            if (outcome.TotalWin <= 0 || gamble.panel == null)
             {
                 return;
             }
@@ -236,65 +261,70 @@ namespace SlotGame.UI
                 StopCoroutine(_popupRoutine);
             }
 
-            _popupRoutine = StartCoroutine(ShowGamblePopupAfterDelay(totalWin, 0.9f));
+            _pendingMega = outcome.IsMegaWin;
+            float delay = outcome.IsMegaWin ? MegaPopupDelay : WinPopupDelay;
+            _popupRoutine = StartCoroutine(ShowGamblePopupAfterDelay(outcome.TotalWin, delay));
         }
 
-        private System.Collections.IEnumerator ShowGamblePopupAfterDelay(int amount, float delay)
+        private IEnumerator ShowGamblePopupAfterDelay(int amount, float delay)
         {
             yield return new WaitForSeconds(delay);
 
-            if (machine.PendingWin <= 0 || gamblePanel == null)
+            if (machine.PendingWin <= 0 || gamble.panel == null)
             {
                 yield break;
             }
 
-            gamblePanel.SetActive(true);
-            if (gambleTitle != null)
+            gamble.panel.SetActive(true);
+
+            if (gamble.title != null)
             {
-                gambleTitle.text = "YOU WIN";
+                gamble.title.text = _pendingMega ? "MEGA WIN!" : "YOU WIN";
             }
 
-            if (gambleAmount != null)
+            if (gamble.amount != null)
             {
-                gambleAmount.text = $"{amount} G";
+                gamble.amount.text = $"{amount} G";
             }
 
-            if (gambleYes != null)
+            if (gamble.yes != null)
             {
-                gambleYes.interactable = true;
+                gamble.yes.interactable = true;
             }
+
+            _popupRoutine = null;
         }
 
         private void HandleGambleResolved(bool won, int newAmount)
         {
             if (won)
             {
-                if (gambleTitle != null)
+                if (gamble.title != null)
                 {
-                    gambleTitle.text = "DOUBLE!";
+                    gamble.title.text = "DOUBLE!";
                 }
 
-                if (gambleAmount != null)
+                if (gamble.amount != null)
                 {
-                    gambleAmount.text = $"{newAmount} G";
+                    gamble.amount.text = $"{newAmount} G";
                 }
 
-                if (winText != null)
+                if (hud.winText != null)
                 {
-                    winText.text = $"WIN {newAmount} G";
+                    hud.winText.text = $"WIN {newAmount} G";
                 }
 
                 return;
             }
 
-            if (gambleAmount != null)
+            if (gamble.amount != null)
             {
-                gambleAmount.text = "0 G";
+                gamble.amount.text = "0 G";
             }
 
-            if (gambleTitle != null)
+            if (gamble.title != null)
             {
-                gambleTitle.text = "GAMBLE LOST";
+                gamble.title.text = "GAMBLE LOST";
             }
 
             ClearHighlights();
@@ -315,22 +345,45 @@ namespace SlotGame.UI
 
         private void HandleStatusMessage(string message)
         {
-            if (statusText != null)
+            if (hud.statusText != null)
             {
-                statusText.text = message;
+                hud.statusText.text = message;
             }
         }
 
-        private System.Collections.IEnumerator ClosePopupAfterDelay(float delay)
+        private void HandleAutoPlayChanged(int remaining)
+        {
+            for (int i = 0; i < _autoLabels.Length; i++)
+            {
+                if (_autoLabels[i] == null)
+                {
+                    continue;
+                }
+
+                if (remaining > 0)
+                {
+                    _autoLabels[i].text = $"STOP {remaining}";
+                }
+                else
+                {
+                    int option = i < machine.AutoSpinOptions.Count ? machine.AutoSpinOptions[i] : 0;
+                    _autoLabels[i].text = $"AUTO {option}";
+                }
+            }
+
+            RefreshInteractables();
+        }
+
+        private IEnumerator ClosePopupAfterDelay(float delay)
         {
             yield return new WaitForSeconds(delay);
-            if (gamblePanel != null)
+            if (gamble.panel != null)
             {
-                gamblePanel.SetActive(false);
+                gamble.panel.SetActive(false);
             }
         }
 
-        private void ShowWinningRows(IReadOnlyList<PaylineWin> wins)
+        private void ShowWinningRows(System.Collections.Generic.IReadOnlyList<PaylineWin> wins)
         {
             ClearHighlights();
             if (wins == null)
@@ -340,16 +393,16 @@ namespace SlotGame.UI
 
             foreach (PaylineWin win in wins)
             {
-                if (win.Row >= 0 && win.Row < winHighlights.Length && winHighlights[win.Row] != null)
+                if (win.Row >= 0 && win.Row < hud.winHighlights.Length && hud.winHighlights[win.Row] != null)
                 {
-                    winHighlights[win.Row].SetActive(true);
+                    hud.winHighlights[win.Row].SetActive(true);
                 }
             }
         }
 
         private void ClearHighlights()
         {
-            foreach (GameObject highlight in winHighlights)
+            foreach (GameObject highlight in hud.winHighlights)
             {
                 if (highlight != null)
                 {
@@ -360,15 +413,41 @@ namespace SlotGame.UI
 
         private void RefreshBetButtons(int selectedBet)
         {
-            for (int i = 0; i < betButtons.Length; i++)
+            for (int i = 0; i < hud.betButtons.Length; i++)
             {
-                if (betButtons[i] == null || betButtons[i].targetGraphic == null)
+                if (hud.betButtons[i] == null || hud.betButtons[i].targetGraphic == null)
                 {
                     continue;
                 }
 
-                bool isSelected = machine != null && i < machine.BetLevels.Count && machine.BetLevels[i] == selectedBet;
-                betButtons[i].targetGraphic.color = isSelected ? SelectedBetColor : UnselectedBetColor;
+                bool isSelected = i < machine.BetLevels.Count && machine.BetLevels[i] == selectedBet;
+                hud.betButtons[i].targetGraphic.color = isSelected ? SelectedBetColor : UnselectedBetColor;
+            }
+        }
+
+        private void RefreshInteractables()
+        {
+            bool idle = !machine.IsBusy && !machine.IsAutoPlaying;
+
+            if (hud.spinButton != null)
+            {
+                hud.spinButton.interactable = idle;
+            }
+
+            foreach (Button button in hud.betButtons)
+            {
+                if (button != null)
+                {
+                    button.interactable = idle;
+                }
+            }
+
+            foreach (Button button in hud.autoButtons)
+            {
+                if (button != null)
+                {
+                    button.interactable = idle || !machine.IsBusy || machine.IsAutoPlaying;
+                }
             }
         }
     }
