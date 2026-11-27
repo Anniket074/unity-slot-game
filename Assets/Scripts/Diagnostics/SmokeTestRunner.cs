@@ -81,6 +81,24 @@ namespace SlotGame.Diagnostics
 
             report.AppendLine($"RESULT spins={SpinCount} wins={wins} credits={machine.Credits} start={startCredits}");
 
+            // Autoplay: three spins back to back, then the machine must be idle again.
+            int beforeAuto = machine.Credits;
+            float autoWaited = 0f;
+            machine.StartAutoPlay(3);
+            while ((machine.IsAutoPlaying || machine.IsBusy) && autoWaited < 30f)
+            {
+                autoWaited += Time.deltaTime;
+                yield return null;
+            }
+
+            if (machine.PendingWin > 0)
+            {
+                machine.CollectWin();
+            }
+
+            report.AppendLine(
+                $"autoplay: {beforeAuto} -> {machine.Credits} credits, idle={!machine.IsAutoPlaying && !machine.IsBusy} after {autoWaited:F1}s");
+
             try
             {
                 File.WriteAllText(outputPath, report.ToString());

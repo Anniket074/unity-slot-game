@@ -74,6 +74,23 @@ namespace SlotGame.Diagnostics
             yield return new WaitForSeconds(1.3f);
             yield return Shot(folder, "05-win-popup");
 
+            // Take the win, then force a full-board match so the mega payout can be
+            // documented without waiting for a one-in-several-thousand spin.
+            machine.CollectWin();
+            yield return new WaitForSeconds(0.6f);
+            machine.ForceMegaRound();
+            machine.Spin();
+
+            while (machine.IsBusy)
+            {
+                yield return null;
+            }
+
+            yield return new WaitForSeconds(0.5f);
+            yield return Shot(folder, "06-mega-line");
+            yield return new WaitForSeconds(1.5f);
+            yield return Shot(folder, "07-mega-popup");
+
             Debug.Log($"[Capture] done; win found after {attempts} extra spins, pending={machine.PendingWin}");
             yield return new WaitForSeconds(0.2f);
             Application.Quit();
