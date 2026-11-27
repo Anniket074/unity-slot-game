@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: https://anniket074.github.io/unity-slot-game/
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,6 +38,17 @@ jobs:
         with:
           path: Build/WebGL
 
+      # The artifact API is eventually consistent: deploying in the same second as the
+      # upload intermittently reports "no artifacts named github-pages were found".
+      - name: Wait for the artifact to register
+        run: sleep 10
+
       - name: Deploy
-        id: deployment
+        id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      # One retry covers the remaining races without needing a manual re-run.
+      - name: Deploy (retry)
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
