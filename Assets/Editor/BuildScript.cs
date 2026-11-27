@@ -27,8 +27,14 @@ namespace SlotGame.EditorTools
         [MenuItem("Slot Game/3. Build WebGL", priority = 21)]
         public static void BuildWebGL()
         {
-            PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Gzip;
+            // Uncompressed on purpose: Unity's gzip/brotli builds need the web server to
+            // set Content-Encoding, which plain static hosts (python -m http.server,
+            // GitHub Pages) do not do. An uncompressed build runs anywhere.
+            PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
             PlayerSettings.WebGL.template = "APPLICATION:Default";
+            PlayerSettings.WebGL.dataCaching = true;
+            PlayerSettings.colorSpace = ColorSpace.Gamma;
+
             Build(BuildTarget.WebGL, "Build/WebGL");
         }
 

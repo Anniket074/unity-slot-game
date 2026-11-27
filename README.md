@@ -57,6 +57,9 @@ python -m http.server 8080
 Any static server works (`npx serve`, `dotnet serve`, IIS, …). It also hosts directly on
 GitHub Pages or itch.io.
 
+Click once inside the game window before using the keyboard — browsers give the canvas
+keyboard focus only after a click (the mouse works immediately).
+
 ### Windows
 
 Run `Build/Windows/SlotMachine.exe` (built locally, not committed — see *Building*).
