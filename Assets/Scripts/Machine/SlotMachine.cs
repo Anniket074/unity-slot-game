@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using SlotGame.Core;
 using SlotGame.Data;
@@ -21,11 +22,15 @@ namespace SlotGame.Machine
         private SpinOutcomeGenerator _generator;
         private IRandomSource _random;
         private SymbolDefinition[,] _lastGrid;
+        private SymbolDefinition[,] _forcedGrid;
+        private Coroutine _autoSpinRoutine;
 
         private int _betIndex;
         private int _stoppedReels;
+        private int _currentStake;
         private int _pendingWin;
         private int _gamblesUsed;
+        private int _autoSpinsRemaining;
         private bool _busy;
 
         public event Action<int> CreditsChanged;
@@ -33,8 +38,8 @@ namespace SlotGame.Machine
         public event Action SpinStarted;
         public event Action<bool> BusyChanged;
 
-        /// <summary>Total win and the individual winning paylines. Raised for every spin.</summary>
-        public event Action<int, IReadOnlyList<PaylineWin>> SpinResolved;
+        /// <summary>The resolved outcome of every spin, win or lose.</summary>
+        public event Action<SpinOutcome> SpinResolved;
 
         /// <summary>True when the gamble was won (with the new stake), false when it was lost.</summary>
         public event Action<bool, int> GambleResolved;
@@ -42,11 +47,16 @@ namespace SlotGame.Machine
         public event Action<int> WinCollected;
         public event Action<string> StatusMessage;
 
+        /// <summary>Remaining autoplay spins; 0 means autoplay is idle.</summary>
+        public event Action<int> AutoPlayChanged;
+
         public int Credits => _wallet != null ? _wallet.Credits : 0;
         public int CurrentBet => config != null ? config.BetLevels[_betIndex] : 0;
         public IReadOnlyList<int> BetLevels => config != null ? config.BetLevels : Array.Empty<int>();
+        public IReadOnlyList<int> AutoSpinOptions => config != null ? config.AutoSpinOptions : Array.Empty<int>();
         public int PendingWin => _pendingWin;
         public bool IsBusy => _busy;
+        public bool IsAutoPlaying => _autoSpinsRemaining > 0;
 
         /// <summary>Authoring helper: wires the machine to its data and reels.</summary>
         public void Configure(GameConfig gameConfig, Reel[] reelSet)
@@ -97,39 +107,6 @@ namespace SlotGame.Machine
             StatusMessage?.Invoke("PRESS SPIN");
         }
 
-        private void ShowIdleGrid()
-        {
-            if (reels == null || reels.Length == 0)
-            {
-                return;
-            }
-
-            SymbolDefinition[,] grid = _generator.Generate(config.Reels, config.Rows);
-            for (int row = 0; row < config.Rows; row++)
-            {
-                SymbolDefinition first = grid[0, row];
-                bool matches = true;
-                for (int reel = 1; reel < config.Reels; reel++)
-                {
-                    if (!ReferenceEquals(grid[reel, row], first))
-                    {
-                        matches = false;
-                        break;
-                    }
-                }
-
-                if (matches)
-                {
-                    grid[config.Reels - 1, row] = _generator.NextSymbolExcluding(first);
-                }
-            }
-
-            for (int i = 0; i < reels.Length; i++)
-            {
-                reels[i].ShowInstant(grid[i, 0], grid[i, 1], grid[i, 2]);
-            }
-        }
-
         private void OnDestroy()
         {
             if (_wallet != null)
@@ -153,7 +130,7 @@ namespace SlotGame.Machine
 
         public void SetBetIndex(int index)
         {
-            if (_busy || config == null || config.BetLevels.Count == 0)
+            if (_busy || IsAutoPlaying || config == null || config.BetLevels.Count == 0)
             {
                 return;
             }
@@ -179,23 +156,39 @@ namespace SlotGame.Machine
             if (!_wallet.CanAfford(CurrentBet))
             {
                 StatusMessage?.Invoke("NOT ENOUGH CREDIT");
+                StopAutoPlay();
                 return;
             }
 
             _wallet.TrySpend(CurrentBet);
+            _currentStake = CurrentBet;
             _busy = true;
             _stoppedReels = 0;
             BusyChanged?.Invoke(true);
             SpinStarted?.Invoke();
 
             // Outcome first: the reels are only ever told where to land.
-            _lastGrid = _generator.Generate(config.Reels, config.Rows);
+            _lastGrid = _forcedGrid ?? _generator.Generate(config.Reels, config.Rows);
+            _forcedGrid = null;
+
+            bool anticipate = HasAnticipation(_lastGrid);
 
             for (int i = 0; i < reels.Length; i++)
             {
+                bool lastReel = i == reels.Length - 1;
                 float duration = config.SpinDuration + i * config.ReelStopStagger;
                 float delay = i * config.ReelStartStagger;
-                reels[i].Spin(_lastGrid[i, 0], _lastGrid[i, 1], _lastGrid[i, 2], duration, delay);
+                float deceleration = SpinCurve.DecelerationFraction;
+
+                // When the first two reels already match, the last one is given a longer,
+                // lazier tail so the player gets a moment of suspense before it lands.
+                if (anticipate && lastReel)
+                {
+                    duration += config.AnticipationExtraDuration;
+                    deceleration = SpinCurve.AnticipationDecelerationFraction;
+                }
+
+                reels[i].Spin(_lastGrid[i, 0], _lastGrid[i, 1], _lastGrid[i, 2], duration, delay, deceleration);
             }
         }
 
@@ -245,6 +238,93 @@ namespace SlotGame.Machine
             }
         }
 
+        /// <summary>Runs <paramref name="spins"/> spins back to back, collecting small wins automatically.</summary>
+        public void StartAutoPlay(int spins)
+        {
+            if (spins <= 0 || config == null)
+            {
+                return;
+            }
+
+            StopAutoPlay();
+            _autoSpinsRemaining = spins;
+            AutoPlayChanged?.Invoke(_autoSpinsRemaining);
+
+            if (!_busy && _pendingWin <= 0)
+            {
+                Spin();
+            }
+        }
+
+        public void StopAutoPlay()
+        {
+            if (_autoSpinRoutine != null)
+            {
+                StopCoroutine(_autoSpinRoutine);
+                _autoSpinRoutine = null;
+            }
+
+            if (_autoSpinsRemaining == 0)
+            {
+                return;
+            }
+
+            _autoSpinsRemaining = 0;
+            AutoPlayChanged?.Invoke(0);
+        }
+
+        /// <summary>
+        /// Diagnostics hook: makes the next spin land on a full-board match so the mega
+        /// win can be screenshotted without waiting for a one-in-three-thousand spin.
+        /// </summary>
+        public void ForceMegaRound()
+        {
+            if (config == null || config.Symbols.Count == 0)
+            {
+                return;
+            }
+
+            SymbolDefinition best = config.Symbols[0];
+            foreach (SymbolDefinition symbol in config.Symbols)
+            {
+                if (symbol != null && symbol.PayoutMultiplier > best.PayoutMultiplier)
+                {
+                    best = symbol;
+                }
+            }
+
+            _forcedGrid = new SymbolDefinition[config.Reels, config.Rows];
+            for (int reel = 0; reel < config.Reels; reel++)
+            {
+                for (int row = 0; row < config.Rows; row++)
+                {
+                    _forcedGrid[reel, row] = best;
+                }
+            }
+        }
+
+        /// <summary>True when the first two reels already line up on something worth teasing.</summary>
+        private bool HasAnticipation(SymbolDefinition[,] grid)
+        {
+            if (config.Reels < 3)
+            {
+                return false;
+            }
+
+            for (int row = 0; row < config.Rows; row++)
+            {
+                SymbolDefinition first = grid[0, row];
+                if (first != null
+                    && ReferenceEquals(first, grid[1, row])
+                    && first.PayoutMultiplier >= config.AnticipationMinPayout)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void HandleReelStopped(Reel reel)
         {
             _stoppedReels++;
@@ -258,22 +338,113 @@ namespace SlotGame.Machine
 
         private void ResolveSpin()
         {
-            float lineBet = CurrentBet / (float)Mathf.Max(1, config.Rows);
-            List<PaylineWin> wins = PaylineEvaluator.Evaluate(_lastGrid, config.Reels, config.Rows, lineBet);
-
-            int total = 0;
-            foreach (PaylineWin win in wins)
-            {
-                total += win.Payout;
-            }
+            SpinOutcome outcome = SpinRules.Evaluate(
+                _lastGrid,
+                config.Reels,
+                config.Rows,
+                _currentStake,
+                config.MegaWinMultiplier);
 
             _busy = false;
             _gamblesUsed = 0;
-            _pendingWin = total;
+            _pendingWin = outcome.TotalWin;
             BusyChanged?.Invoke(false);
-            SpinResolved?.Invoke(total, wins);
+            SpinResolved?.Invoke(outcome);
 
-            StatusMessage?.Invoke(total > 0 ? $"WIN {total} G" : "NO WIN");
+            if (outcome.IsMegaWin)
+            {
+                StatusMessage?.Invoke($"MEGA WIN {outcome.TotalWin} G");
+            }
+            else
+            {
+                StatusMessage?.Invoke(outcome.TotalWin > 0 ? $"WIN {outcome.TotalWin} G" : "NO WIN");
+            }
+
+            HandleAutoPlayStep(outcome);
+        }
+
+        private void HandleAutoPlayStep(SpinOutcome outcome)
+        {
+            if (_autoSpinsRemaining <= 0)
+            {
+                return;
+            }
+
+            _autoSpinsRemaining--;
+            AutoPlayChanged?.Invoke(_autoSpinsRemaining);
+
+            bool bigWin = outcome.TotalWin >= _currentStake * config.BigWinMultiplier;
+            if (bigWin)
+            {
+                // Hand the big win to the player rather than swallowing it: autoplay stops
+                // and the normal collect-or-gamble popup takes over.
+                StopAutoPlay();
+                return;
+            }
+
+            if (outcome.TotalWin > 0)
+            {
+                CollectWin();
+            }
+
+            if (_autoSpinsRemaining <= 0)
+            {
+                StopAutoPlay();
+                return;
+            }
+
+            if (!_wallet.CanAfford(CurrentBet))
+            {
+                StatusMessage?.Invoke("AUTOPLAY STOPPED - OUT OF CREDIT");
+                StopAutoPlay();
+                return;
+            }
+
+            _autoSpinRoutine = StartCoroutine(NextAutoSpinAfterDelay());
+        }
+
+        private IEnumerator NextAutoSpinAfterDelay()
+        {
+            yield return new WaitForSeconds(0.45f);
+            _autoSpinRoutine = null;
+
+            if (_autoSpinsRemaining > 0 && !_busy && _pendingWin <= 0)
+            {
+                Spin();
+            }
+        }
+
+        private void ShowIdleGrid()
+        {
+            if (reels == null || reels.Length == 0)
+            {
+                return;
+            }
+
+            SymbolDefinition[,] grid = _generator.Generate(config.Reels, config.Rows);
+            for (int row = 0; row < config.Rows; row++)
+            {
+                SymbolDefinition first = grid[0, row];
+                bool matches = true;
+                for (int reel = 1; reel < config.Reels; reel++)
+                {
+                    if (!ReferenceEquals(grid[reel, row], first))
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (matches)
+                {
+                    grid[config.Reels - 1, row] = _generator.NextSymbolExcluding(first);
+                }
+            }
+
+            for (int i = 0; i < reels.Length; i++)
+            {
+                reels[i].ShowInstant(grid[i, 0], grid[i, 1], grid[i, 2]);
+            }
         }
 
         private void HandleCreditsChanged(int credits)

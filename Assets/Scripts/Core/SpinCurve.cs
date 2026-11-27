@@ -18,10 +18,18 @@ namespace SlotGame.Core
         /// <summary>Portion of the spin duration spent decelerating (0-1).</summary>
         public const float DecelerationFraction = 0.45f;
 
+        /// <summary>Longer, lazier tail used by the anticipation spin so the last reel creeps in.</summary>
+        public const float AnticipationDecelerationFraction = 0.78f;
+
         public static float Evaluate(float normalizedTime)
         {
+            return Evaluate(normalizedTime, DecelerationFraction);
+        }
+
+        public static float Evaluate(float normalizedTime, float decelerationFraction)
+        {
             float t = Mathf.Clamp01(normalizedTime);
-            const float d = DecelerationFraction;
+            float d = Mathf.Clamp(decelerationFraction, 0.1f, 0.9f);
 
             // With a constant cruise speed v for (1-d) of the time and a v*(1-u)^2
             // tail for the remaining d, integrating the velocity gives a total

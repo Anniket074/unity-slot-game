@@ -32,6 +32,7 @@ namespace SlotGame.Machine
         private float _elapsed;
         private float _startDelay;
         private float _duration;
+        private float _deceleration = SpinCurve.DecelerationFraction;
         private Vector2 _targetPosition;
         private Coroutine _settleRoutine;
 
@@ -79,7 +80,8 @@ namespace SlotGame.Machine
             SymbolDefinition centre,
             SymbolDefinition bottom,
             float duration,
-            float startDelay)
+            float startDelay,
+            float decelerationFraction = SpinCurve.DecelerationFraction)
         {
             if (_settleRoutine != null)
             {
@@ -97,6 +99,7 @@ namespace SlotGame.Machine
             content.anchoredPosition = Vector2.zero;
             _duration = Mathf.Max(0.1f, duration);
             _startDelay = Mathf.Max(0f, startDelay);
+            _deceleration = decelerationFraction;
             _elapsed = 0f;
             _isSpinning = true;
         }
@@ -118,7 +121,7 @@ namespace SlotGame.Machine
             content.anchoredPosition = Vector2.LerpUnclamped(
                 Vector2.zero,
                 _targetPosition,
-                SpinCurve.Evaluate(normalized));
+                SpinCurve.Evaluate(normalized, _deceleration));
 
             if (normalized >= 1f)
             {
