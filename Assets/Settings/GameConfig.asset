@@ -23,6 +23,11 @@ MonoBehaviour:
   startingCredits: 500
   betLevels: 0a0000003200000064000000
   maxGambles: 3
+  autoSpinOptions: 0a00000019000000
+  megaWinMultiplier: 200
+  bigWinMultiplier: 10
+  anticipationMinPayout: 10
+  anticipationExtraDuration: 0.8
   spinDuration: 1.4
   reelStopStagger: 0.16
   reelStartStagger: 0.06
