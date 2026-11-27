@@ -4,6 +4,10 @@ A three-reel, three-row slot machine built in Unity 2022.3 LTS from the supplied
 Spin the reels, match three symbols on a payline, and decide whether to keep the win or
 gamble it for double.
 
+### ▶ [Play in the browser](https://anniket074.github.io/unity-slot-game/)
+
+No install, no clone — the link opens the WebGL build directly.
+
 ![Idle](Screenshots/01-idle.png)
 
 | Spinning | Winning payline | Gamble offer |
@@ -45,8 +49,13 @@ immediately.
 
 ### WebGL (recommended)
 
-The build is in **`Build/WebGL`**. Browsers refuse to load WebGL builds from `file://`,
-so serve the folder over HTTP:
+**Play it here: <https://anniket074.github.io/unity-slot-game/>**
+
+That URL is published by `.github/workflows/deploy-pages.yml`, which deploys the committed
+`Build/WebGL` folder to GitHub Pages on every push that touches it.
+
+To run the build locally instead, the folder has to be served over HTTP — browsers refuse
+to load WebGL builds from `file://`:
 
 ```bash
 cd Build/WebGL
@@ -55,7 +64,7 @@ python -m http.server 8080
 ```
 
 Any static server works (`npx serve`, `dotnet serve`, IIS, …). It also hosts directly on
-GitHub Pages or itch.io.
+itch.io.
 
 Click once inside the game window before using the keyboard — browsers give the canvas
 keyboard focus only after a click (the mouse works immediately).
