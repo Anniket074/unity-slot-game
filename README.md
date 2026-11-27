@@ -190,9 +190,10 @@ SlotMachine.exe -autotest Logs/autotest.txt
 SlotMachine.exe -capture Screenshots/capture
 ```
 
-A sample `-autotest` report is committed as `Docs/autotest-sample.txt`: all 30 spins debit
-correctly, 7 wins resolved, and payouts match the paytable (17 / 33 / 34 for cherry, BAR and
-double-cherry lines at a 10 bet).
+A sample `-autotest` report is committed as `Docs/autotest-sample.txt`. It runs 30 spins
+through the real scene and asserts that each one debits exactly the bet, then records the
+win and the resulting balance (payouts follow the paytable: 17 for a cherry line, 33 for a
+BAR line at a 10 bet, and so on).
 
 ---
 

@@ -77,7 +77,7 @@ namespace SlotGame.EditorTools
             foreach (string folder in new[]
                      {
                          "Assets/Scenes", "Assets/Prefabs", "Assets/Animations", "Assets/Settings",
-                         "Assets/Settings/Symbols", "Assets/Resources"
+                         "Assets/Settings/Symbols"
                      })
             {
                 if (!AssetDatabase.IsValidFolder(folder))

@@ -44,7 +44,13 @@ namespace SlotGame.EditorTools
                 importer.filterMode = FilterMode.Bilinear;
                 importer.textureCompression = TextureImporterCompression.Uncompressed;
                 importer.spriteImportMode = SpriteImportMode.Multiple;
+
+                // The modern replacement (ISpriteEditorDataProvider) lives in the 2D Sprite
+                // Editor package, which this bare project does not depend on. The legacy
+                // property still writes the same slicing data, so it is used deliberately.
+#pragma warning disable 0618
                 importer.spritesheet = BuildButtonFrames(path);
+#pragma warning restore 0618
                 return;
             }
 
