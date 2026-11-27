@@ -1,0 +1,24 @@
+# Keep Unity's YAML assets as text so diffs stay readable.
+* text=auto
+
+# Never let git touch line endings inside binaries.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.psd   binary
+*.exr   binary
+*.ttf   binary
+*.otf   binary
+*.wasm  binary
+*.data  binary
+*.unityweb binary
+*.dll   binary
+*.so    binary
+
+# Unity scenes/prefabs/assets are YAML - merge them as text.
+*.unity  text
+*.prefab text
+*.asset  text
+*.controller text
+*.anim   text
