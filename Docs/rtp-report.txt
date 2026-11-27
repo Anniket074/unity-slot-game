@@ -1,0 +1,10 @@
+Slot Machine - paytable simulation
+=================================
+spins            500,000
+bet per spin     10
+total staked     5,000,000
+total returned   4,713,480
+RTP              94.27 %
+hit rate         27.10 % (135,501 paid spins)
+mega wins        145 (1 in 3,448)
+best win         667 G (67x bet)
